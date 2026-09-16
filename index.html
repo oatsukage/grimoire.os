@@ -956,7 +956,8 @@ button.ui-press::after{
   function rateApt(v){ v=num(v); if(v<=0) return 0; if(v<=3) return 2; if(v<=6) return 3; if(v===7) return 4; return 5; }
   function roll2d4(){ return 1 + Math.floor(Math.random()*4) + 1 + Math.floor(Math.random()*4); }
   function capacityStatus(d){ return d.capacityUsed>d.capacity ? 'Over Capacity' : `${d.capacityUsed} / ${d.capacity}`; }
-  function activeStability(s,g){ return (g.techniques||[]).filter(t=>s.sustained[t.id]).reduce((a,t)=>a+num(t.stability||t.grade),0); }
+  function sustainedCount(s,id){ const v=s.sustained?.[id]; return v===true ? 1 : Math.max(0,num(v)); }
+  function activeStability(s,g){ return (g.techniques||[]).reduce((a,t)=>a + sustainedCount(s,t.id)*num(t.stability||t.grade),0); }
   function typeCompat(c,t){
     const types = String(t||'').split('/').map(x=>x.trim()).filter(Boolean);
     if(!types.length) return 0;
@@ -1754,7 +1755,7 @@ button.ui-press::after{
     if(s.health===null) s.health = d.maxHealth;
     const stabilityNow = activeStability(s,g);
     const os = overstrain(s,d);
-    const activeEffects = g.techniques.filter(t=>s.sustained[t.id]).map(t=>`<span class="active-effect">${esc(t.name)} · STB ${num(t.stability || t.grade)} <button class="btn small ghost" data-toggle-sustain="${t.id}">×</button></span>`).join('');
+    const activeEffects = g.techniques.filter(t=>sustainedCount(s,t.id)>0).map(t=>{ const count=sustainedCount(s,t.id), load=num(t.stability||t.grade); return `<span class="active-effect">${esc(t.name)}${count>1?` ×${count}`:''} · STB ${load*count} <button class="btn small ghost" data-toggle-sustain="${t.id}">×</button></span>`; }).join('');
     const log = (s.fxlog||[]).slice().reverse();
 
     app.innerHTML = shell(`
@@ -1832,14 +1833,14 @@ button.ui-press::after{
   }
 
   function techCard(t,s,d,g,c,stabilityNow){
-    const active = !!s.sustained[t.id];
+    const active = sustainedCount(s,t.id) > 0;
     const stateBox = s.techState[t.id] || {repeat:0};
     const nextRepeat = num(stateBox.repeat) + 1;
     const demand = num(t.output) * nextRepeat;
     const outOC = Math.max(0, demand - d.safeOutput);
     const ctrlOC = Math.max(0, num(t.complexity||1) - d.control);
     const typeOC = Math.max(0, num(t.grade) - typeCompat(c,t.type));
-    const stabOC = t.duration==='Sustained' && !active ? Math.max(0, stabilityNow + num(t.stability||t.grade) - d.stability) : 0;
+    const stabOC = t.duration==='Sustained' ? Math.max(0, stabilityNow + num(t.stability||t.grade) - d.stability) : 0;
     const strain = outOC + ctrlOC + typeOC + stabOC;
     const chosenFx = techActivationAnim(t,g);
     const fxClass = ui.lastFx===t.id ? `fx-${slug(chosenFx)}` : '';
@@ -1930,13 +1931,13 @@ button.ui-press::after{
     const ctrlOC = Math.max(0, num(t.complexity||1) - d.control);
     const typeOC = Math.max(0, num(t.grade) - typeCompat(c,t.type));
     const stabNow = activeStability(s,g);
-    const stabOC = t.duration==='Sustained' && !s.sustained[id] ? Math.max(0, stabNow + num(t.stability||t.grade) - d.stability) : 0;
+    const stabOC = t.duration==='Sustained' ? Math.max(0, stabNow + num(t.stability||t.grade) - d.stability) : 0;
     const gain = outOC + ctrlOC + typeOC + stabOC;
     s.strain += gain;
     st.repeat = repeat;
     st.usedThisActivation = true;
     s.techState[id] = st;
-    if(t.duration==='Sustained') s.sustained[id]=true;
+    if(t.duration==='Sustained') s.sustained[id]=sustainedCount(s,id)+1;
     s.fxlog.push(`${t.name} · Output ${demand}${gain ? ` · +${gain} Strain` : ''}`);
     s.fxlog=s.fxlog.slice(-8);
     persistSession(s);
@@ -2151,7 +2152,7 @@ button.ui-press::after{
       if(el.dataset.strain){ const c=getContractor(route.id),g=getGrimoire(route.gid),s=getSession(c.id,g.id); s.strain=Math.max(0,s.strain+num(el.dataset.strain)); persistSession(s); return render(); }
       if(el.dataset.cond){ const c=getContractor(route.id),g=getGrimoire(route.gid),s=getSession(c.id,g.id),k=el.dataset.cond; s.conditions=s.conditions.includes(k)?s.conditions.filter(x=>x!==k):[...s.conditions,k]; persistSession(s); return render(); }
       if(el.dataset.useTech) return useTechnique(el.dataset.useTech);
-      if(el.dataset.toggleSustain){ const c=getContractor(route.id),g=getGrimoire(route.gid),s=getSession(c.id,g.id),id=el.dataset.toggleSustain; s.sustained[id]=!s.sustained[id]; s.fxlog.push(`${g.name}: ${s.sustained[id]?'Sustained':'Ended'} ${g.techniques.find(t=>t.id===id)?.name || 'Technique'}`); s.fxlog=s.fxlog.slice(-8); persistSession(s); return render(); }
+      if(el.dataset.toggleSustain){ const c=getContractor(route.id),g=getGrimoire(route.gid),s=getSession(c.id,g.id),id=el.dataset.toggleSustain; const count=sustainedCount(s,id); if(count>1) s.sustained[id]=count-1; else delete s.sustained[id]; s.fxlog.push(`${g.name}: Ended ${g.techniques.find(t=>t.id===id)?.name || 'Technique'}${count>1?' instance':''}`); s.fxlog=s.fxlog.slice(-8); persistSession(s); return render(); }
       if(el.hasAttribute('data-damage')){ ui.modal={type:'damage',incoming:0,piercing:0,ignoreArmor:false}; return renderModal(); }
       if(el.hasAttribute('data-heal')){ ui.modal={type:'heal',amount:0}; return renderModal(); }
       if(el.hasAttribute('data-manage-wounds')){ ui.modal={type:'wounds'}; return renderModal(); }
